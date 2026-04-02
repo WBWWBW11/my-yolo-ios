@@ -1,4 +1,4 @@
-name: Build YOLO iOS 侧载 IPA (修复参数版)
+name: Build YOLO iOS 侧载 IPA (终极归档版)
 
 on: 
   workflow_dispatch: 
@@ -13,40 +13,45 @@ jobs:
 
       - name: 2. 强力解析依赖
         run: |
-          cd ExampleApps/YOLORealTimeUIKit
+          cd "示例应用程序/YOLORealTimeUIKit"
           xcodebuild -resolvePackageDependencies -project YOLORealTimeUIKit.xcodeproj
 
-      - name: 3. 强制编译 (去掉冲突参数)
+      - name: 3. 终极归档 (彻底解决 477KB 空壳问题)
         run: |
-          cd ExampleApps/YOLORealTimeUIKit
-          # 核心修正：删除了 -arch arm64，只保留 destination
-          xcodebuild build \
+          cd "示例应用程序/YOLORealTimeUIKit"
+          # 使用 archive 模式强行打包，这是生成满血版 App 的唯一可靠方法
+          xcodebuild archive \
             -project YOLORealTimeUIKit.xcodeproj \
             -scheme YOLORealTimeUIKit \
             -configuration Release \
             -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath "../../build_output" \
+            -archivePath "../../YOLO.xcarchive" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES
 
-      - name: 4. 提取 .app 并打包 IPA
+      - name: 4. 提取满血版二进制并封装 IPA
         run: |
           mkdir -p Payload
-          # 既然指定了输出路径，直接去 build_output 里抓人
-          APP_PATH=$(find build_output -name "YOLORealTimeUIKit.app" -type d | grep "Release-iphoneos" | head -n 1)
+          # 从归档文件中精准提取 .app，这里面绝对包含二进制执行文件
+          APP_PATH=$(find YOLO.xcarchive -name "*.app" -type d | head -n 1)
           
           if [ -z "$APP_PATH" ]; then
-            echo "❌ 还是没搜到产物，列出当前结构排错："
-            find build_output -maxdepth 5
+            echo "❌ 归档失败，没找到 .app！"
             exit 1
           fi
 
+          echo "✅ 成功捕获满血版 App: $APP_PATH"
           cp -R "$APP_PATH" Payload/
+          
+          # 验证二进制文件是否存在（防止又是空壳）
+          EXECUTABLE_NAME=$(defaults read "$(pwd)/$APP_PATH/Info.plist" CFBundleExecutable)
+          echo "🔥 核心二进制检测: $EXECUTABLE_NAME"
+          ls -lh "$APP_PATH/$EXECUTABLE_NAME"
+          
           zip -qr YOLO-Full-App.ipa Payload
-          echo "✅ 最终包大小: $(du -sh YOLO-Full-App.ipa)"
+          echo "📦 最终包大小: $(du -sh YOLO-Full-App.ipa)"
 
       - name: 5. 提交产物
         uses: actions/upload-artifact@v4

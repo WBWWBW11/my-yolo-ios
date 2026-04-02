@@ -8,21 +8,28 @@ jobs:
     runs-on: macos-latest 
 
     steps:
-      - name: 1. 拉取代码
+      - name: 1. 检出代码
         uses: actions/checkout@v4
 
-      - name: 2. 预热依赖
-        run: |
-          # 针对 Swift Package 项目，先强制解析一遍依赖
-          xcodebuild -resolvePackageDependencies -project YOLOIOSApp/YOLOIOSApp.xcodeproj
+      - name: 2. 打印目录结构 (调试用)
+        run: ls -R
 
-      - name: 3. 强制编译 (剥离证书逻辑)
+      - name: 3. 解析依赖 (强制重试)
         run: |
-          # 明确指定项目文件和 Scheme，避免 find 出错
-          # 使用 -destination 'generic/platform=iOS' 锁定真机环境
+          PROJ=$(find . -name "*.xcodeproj" | head -n 1)
+          xcodebuild -resolvePackageDependencies -project "$PROJ" || xcodebuild -resolvePackageDependencies -project "$PROJ"
+
+      - name: 4. 强制编译
+        run: |
+          # 自动寻找第一个工程文件和第一个 Scheme
+          PROJ=$(find . -name "*.xcodeproj" | head -n 1)
+          SCHEME=$(xcodebuild -list -project "$PROJ" | grep -A 5 "Schemes:" | tail -n 1 | xargs)
+          
+          echo "🚀 正在编译: $PROJ | Scheme: $SCHEME"
+          
           xcodebuild build \
-            -project YOLOIOSApp/YOLOIOSApp.xcodeproj \
-            -scheme YOLOIOSApp \
+            -project "$PROJ" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
@@ -31,34 +38,26 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            COMPILER_INDEX_STORE_ENABLE=NO | xcpretty
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            | xcpretty || xcodebuild build -project "$PROJ" -scheme "$SCHEME" -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
 
-      - name: 4. 提取战利品
+      - name: 5. 提取并打包
         run: |
           mkdir -p Payload
-          # 在 Xcode 默认输出目录寻找 .app 文件夹
-          # 官方项目编译后通常会放在 DerivedData 的某个角落
-          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "YOLOIOSApp.app" -type d | grep "Release-iphoneos" | head -n 1)
+          # 动态搜索编译出的 .app 文件夹
+          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "*.app" -type d | grep "Release-iphoneos" | head -n 1)
           
           if [ -z "$APP_PATH" ]; then
-            echo "❌ 还是没搜到 .app，尝试检查当前目录..."
-            APP_PATH=$(find . -name "*.app" -type d | grep "Release" | head -n 1)
+            echo "❌ 依然没找到产物，请检查步骤 4 的日志"
+            exit 1
           fi
-
-          if [ -z "$APP_PATH" ]; then
-             echo "❌ 彻底失败，没找到编译产物"
-             exit 1
-          fi
-
-          echo "✅ 捕获目标: $APP_PATH"
+          
           cp -R "$APP_PATH" Payload/
-          zip -qr YOLO-Full.ipa Payload
-          
-          # 打印大小，法师请盯着这行看！
-          ls -lh YOLO-Full.ipa
+          zip -qr YOLO-App.ipa Payload
+          echo "✅ 最终包大小: $(du -sh YOLO-App.ipa)"
 
-      - name: 5. 最终发货
+      - name: 6. 上传
         uses: actions/upload-artifact@v4
         with:
           name: YOLO-FINAL-IPA
-          path: YOLO-Full.ipa
+          path: YOLO-App.ipa

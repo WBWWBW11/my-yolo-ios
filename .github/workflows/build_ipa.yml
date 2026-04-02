@@ -1,31 +1,24 @@
 name: Build YOLO iOS Sideload IPA
 
 on: 
-  workflow_dispatch: # 允许我们在网页上手动点击按钮触发打包
+  workflow_dispatch: 
 
 jobs:
   build:
-    runs-on: macos-latest # 征用 GitHub 的免费 Mac 服务器
+    runs-on: macos-latest 
 
     steps:
-      - name: 1. 下载你的源码
+      - name: 1. 下载源码
         uses: actions/checkout@v4
 
-      - name: 2. 选用稳定的 Xcode 编译环境
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: '15.2' # 使用适合 iPhone 14 PM 的稳定版本
-
-      - name: 3. 自动寻找工程并免签编译 (核心魔法)
+      - name: 2. 自动寻找工程并免签编译 (核心魔法)
         run: |
-          # 自动寻找项目里的 xcodeproj 文件
           PROJECT_PATH=$(find . -name "*.xcodeproj" | head -n 1)
           PROJECT_NAME=$(basename "$PROJECT_PATH")
           SCHEME_NAME=${PROJECT_NAME%.*}
           
           echo "🎯 发现苹果工程: $PROJECT_NAME, 使用 Scheme: $SCHEME_NAME"
           
-          # 强制编译输出到当前目录的 build_output 文件夹
           xcodebuild clean build \
             -project "$PROJECT_PATH" \
             -scheme "$SCHEME_NAME" \
@@ -38,14 +31,13 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             CONFIGURATION_BUILD_DIR="$(pwd)/build_output"
 
-      - name: 4. 组装成纯正的 iOS 安装包
+      - name: 3. 组装成纯正的 iOS 安装包
         run: |
           mkdir -p Payload
-          # 自动寻回编译好的 .app 文件并移动
           mv build_output/*.app Payload/
           zip -qr YOLO-App.ipa Payload
 
-      - name: 5. 发货
+      - name: 4. 发货
         uses: actions/upload-artifact@v4
         with:
           name: YOLO-Sideload-IPA

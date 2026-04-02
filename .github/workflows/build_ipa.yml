@@ -8,51 +8,57 @@ jobs:
     runs-on: macos-latest 
 
     steps:
-      - name: 1. 下载源码
+      - name: 1. 拉取代码
         uses: actions/checkout@v4
 
-      - name: 2. 修复依赖并编译 (针对官方仓库优化)
+      - name: 2. 预热依赖
         run: |
-          PROJECT_PATH=$(find . -name "*.xcodeproj" | head -n 1)
-          
-          echo "📦 正在解析 Swift Package 依赖..."
-          xcodebuild -resolvePackageDependencies -project "$PROJECT_PATH"
-          
-          echo "🏗️ 开始满血编译..."
-          # 强制锁定官方 App 的 Scheme 名 "YOLOIOSApp"
-          # 加入 -destination 确保编译器知道它是为真机准备的
+          # 针对 Swift Package 项目，先强制解析一遍依赖
+          xcodebuild -resolvePackageDependencies -project YOLOIOSApp/YOLOIOSApp.xcodeproj
+
+      - name: 3. 强制编译 (剥离证书逻辑)
+        run: |
+          # 明确指定项目文件和 Scheme，避免 find 出错
+          # 使用 -destination 'generic/platform=iOS' 锁定真机环境
           xcodebuild build \
-            -project "$PROJECT_PATH" \
-            -scheme "YOLOIOSApp" \
+            -project YOLOIOSApp/YOLOIOSApp.xcodeproj \
+            -scheme YOLOIOSApp \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
+            -arch arm64 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            ALLOW_PROVISIONING_PROFILE_SPECIFIER_FAILURE=YES \
-            COMPILER_INDEX_STORE_ENABLE=NO
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            COMPILER_INDEX_STORE_ENABLE=NO | xcpretty
 
-      - name: 3. 暴力搜寻并提取大包
+      - name: 4. 提取战利品
         run: |
           mkdir -p Payload
-          # 在 Xcode 的深层缓存目录里寻找那个真正的 .app 文件夹
-          BUILD_DIR=$(find ~/Library/Developer/Xcode/DerivedData -name "*.app" -type d | grep "Release-iphoneos" | head -n 1)
+          # 在 Xcode 默认输出目录寻找 .app 文件夹
+          # 官方项目编译后通常会放在 DerivedData 的某个角落
+          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "YOLOIOSApp.app" -type d | grep "Release-iphoneos" | head -n 1)
           
-          if [ -z "$BUILD_DIR" ]; then
-            echo "❌ 还是没找到 .app，编译可能中途失败了"
-            exit 1
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ 还是没搜到 .app，尝试检查当前目录..."
+            APP_PATH=$(find . -name "*.app" -type d | grep "Release" | head -n 1)
           fi
-          
-          echo "✅ 捕获目标: $BUILD_DIR"
-          cp -R "$BUILD_DIR" Payload/
-          zip -qr YOLO-Full-App.ipa Payload
+
+          if [ -z "$APP_PATH" ]; then
+             echo "❌ 彻底失败，没找到编译产物"
+             exit 1
+          fi
+
+          echo "✅ 捕获目标: $APP_PATH"
+          cp -R "$APP_PATH" Payload/
+          zip -qr YOLO-Full.ipa Payload
           
           # 打印大小，法师请盯着这行看！
-          ls -lh YOLO-Full-App.ipa
+          ls -lh YOLO-Full.ipa
 
-      - name: 4. 发货
+      - name: 5. 最终发货
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-FULL-IPA
-          path: YOLO-Full-App.ipa
+          name: YOLO-FINAL-IPA
+          path: YOLO-Full.ipa

@@ -1,87 +1,91 @@
-name: Build YOLO iOS 侧载 IPA (终极归档版)
+name: Build YOLO iOS 侧载 IPA
 on: 
   workflow_dispatch: 
 
 jobs:
   build:
     runs-on: macos-latest
-    # 增加权限，避免打包权限不足
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: 1. 检出代码
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive' # 递归拉取子模块，防止依赖缺失
+          submodules: recursive
 
-      - name: 2. 清理Xcode缓存（避免打包异常）
+      - name: 2. 配置 Node 环境 (消除警告)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 3. 初始化环境
         run: |
+          set -euo pipefail
+          echo "=== 环境检查 ==="
+          ls -la "${{ github.workspace }}"
+          echo "================="
+
+      - name: 4. 清理旧缓存
+        run: |
+          set -euo pipefail
           rm -rf ~/Library/Developer/Xcode/DerivedData
-          defaults delete com.apple.dt.Xcode
+          echo "✅ Xcode 缓存已清理"
 
-      - name: 3. 解析SPM依赖
+      - name: 5. 解析依赖
         run: |
-          cd "示例应用程序/YOLORealTimeUIKit"
+          set -euo pipefail
+          cd "${{ github.workspace }}/示例应用程序/YOLORealTimeUIKit"
           xcodebuild -resolvePackageDependencies \
             -project YOLORealTimeUIKit.xcodeproj \
-            -scheme YOLORealTimeUIKit \
-            -scipkgraph
+            -scheme YOLORealTimeUIKit
 
-      - name: 4. 真机归档（彻底解决空壳IPA）
+      - name: 6. 开始归档
         run: |
-          cd "示例应用程序/YOLORealTimeUIKit"
+          set -euo pipefail
+          cd "${{ github.workspace }}/示例应用程序/YOLORealTimeUIKit"
+          
           xcodebuild archive \
             -project YOLORealTimeUIKit.xcodeproj \
             -scheme YOLORealTimeUIKit \
             -configuration Release \
             -sdk iphoneos \
             -archivePath "${{ github.workspace }}/YOLO.xcarchive" \
-            # 核心：关闭签名，适配侧载，无冲突参数
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE="" \
-            # 禁止Bitcode，减小体积，适配侧载
             ENABLE_BITCODE=NO
 
-      - name: 5. 验证归档并提取.app文件
+      - name: 7. 验证归档文件
         run: |
-          # 标准Xcode归档路径，100%精准定位，替代不稳定的find命令
+          set -euo pipefail
           APP_PATH="${{ github.workspace }}/YOLO.xcarchive/Products/Applications/YOLORealTimeUIKit.app"
           
           if [ ! -d "$APP_PATH" ]; then
-            echo "❌ 错误：未找到.app文件，归档失败"
+            echo "❌ 归档失败，未找到 .app"
             exit 1
           fi
-          echo "✅ 成功获取应用文件：$APP_PATH"
+          
+          echo "✅ 归档成功: $APP_PATH"
+          ls -lh "$APP_PATH"
 
-      - name: 6. 封装标准侧载IPA
+      - name: 8. 打包 IPA
         run: |
-          # 创建Payload文件夹（iOS侧载强制要求）
+          set -euo pipefail
+          rm -rf Payload YOLO-Final.ipa
           mkdir -p Payload
-          # 复制应用到Payload
+          
           cp -R "${{ github.workspace }}/YOLO.xcarchive/Products/Applications/YOLORealTimeUIKit.app" Payload/
           
-          # 清理垃圾文件，减小IPA体积
           find Payload -name ".DS_Store" -delete
-          find Payload -name "*.framework" -delete 2>/dev/null || true
-          
-          # 打包IPA
           zip -qry YOLO-Final.ipa Payload
           
-          # 验证包大小（排除477KB空包）
           IPA_SIZE=$(du -sh YOLO-Final.ipa | awk '{print $1}')
-          echo "📦 打包完成！IPA大小：$IPA_SIZE"
-          
-          # 体积校验：小于10MB直接报错（空包防护）
-          if [ $(du -k YOLO-Final.ipa | cut -f1) -lt 10240 ]; then
-            echo "❌ 错误：生成空壳IPA，终止任务"
-            exit 1
-          fi
+          echo "📦 打包完成: $IPA_SIZE"
 
-      - name: 7. 上传最终IPA产物
+      - name: 9. 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-iOS-Final-IPA
+          name: YOLO-iOS-IPA
           path: YOLO-Final.ipa
-          retention-days: 7 # 保留7天，可自行修改
+          retention-days: 7

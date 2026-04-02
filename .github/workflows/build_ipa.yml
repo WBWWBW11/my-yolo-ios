@@ -1,4 +1,4 @@
-name: Build YOLO iOS 侧载 IPA (终极版)
+name: Build YOLO iOS 侧载 IPA (全路径锁定版)
 
 on: 
   workflow_dispatch: 
@@ -11,43 +11,48 @@ jobs:
       - name: 1. 检出代码
         uses: actions/checkout@v4
 
-      - name: 2. 强行锁定路径并解析依赖
+      - name: 2. 强力解析依赖 (进入子目录)
         run: |
-          # 根据你的日志，工程就在这个确定的路径下
-          PROJ="ExampleApps/YOLORealTimeUIKit/YOLORealTimeUIKit.xcodeproj"
-          xcodebuild -resolvePackageDependencies -project "$PROJ"
+          # 这一步直接进入你的工程文件夹，避免路径迷路
+          cd ExampleApps/YOLORealTimeUIKit
+          xcodebuild -resolvePackageDependencies -project YOLORealTimeUIKit.xcodeproj
 
-      - name: 3. 强行编译 (方案名直接锁死)
+      - name: 3. 强制编译并指定输出目录 (解决 Code 70)
         run: |
-          # 方案名直接锁死为 YOLORealTimeUIKit，不再让脚本瞎猜
+          # 进入子目录执行
+          cd ExampleApps/YOLORealTimeUIKit
+          # 我们手动指定 DerivedData 路径到根目录的 build_output
           xcodebuild build \
-            -project "ExampleApps/YOLORealTimeUIKit/YOLORealTimeUIKit.xcodeproj" \
-            -scheme "YOLORealTimeUIKit" \
+            -project YOLORealTimeUIKit.xcodeproj \
+            -scheme YOLORealTimeUIKit \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
+            -derivedDataPath "../../build_output" \
             -arch arm64 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES
 
-      - name: 4. 提取并打包
+      - name: 4. 提取 .app 并打包 IPA
         run: |
           mkdir -p Payload
-          # 搜索路径优化，直接在标准输出位置找
-          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "YOLORealTimeUIKit.app" -type d | grep "Release-iphoneos" | head -n 1)
+          # 因为我们在上一步指定了路径，现在产物位置是死掉的
+          APP_PATH=$(find build_output -name "YOLORealTimeUIKit.app" -type d | grep "Release-iphoneos" | head -n 1)
           
           if [ -z "$APP_PATH" ]; then
-             echo "❌ 没找到产物，尝试备选搜索..."
-             APP_PATH=$(find . -name "*.app" -type d | head -n 1)
+            echo "❌ 依然没找到产物，列出目录结构排查："
+            find build_output -maxdepth 5
+            exit 1
           fi
 
+          echo "✅ 成功捕获目标: $APP_PATH"
           cp -R "$APP_PATH" Payload/
           zip -qr YOLO-Full-App.ipa Payload
-          echo "✅ 最终包大小: $(du -sh YOLO-Full-App.ipa)"
+          echo "📦 最终包大小: $(du -sh YOLO-Full-App.ipa)"
 
-      - name: 5. 最终发货
+      - name: 5. 提交产物
         uses: actions/upload-artifact@v4
         with:
           name: YOLO-FINAL-IPA

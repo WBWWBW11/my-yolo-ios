@@ -11,28 +11,44 @@ jobs:
       - name: 1. 下载源码
         uses: actions/checkout@v4
 
-      - name: 2. 满血编译（带模型和资源）
+      - name: 2. 满血编译
         run: |
+          # 寻找工程文件
           PROJECT_PATH=$(find . -name "*.xcodeproj" | head -n 1)
-          PROJECT_NAME=$(basename "$PROJECT_PATH")
-          SCHEME_NAME=${PROJECT_NAME%.*}
+          SCHEME_NAME=$(xcodebuild -list -project "$PROJECT_PATH" | grep -A 5 "Schemes:" | tail -n 1 | xargs)
           
-          xcodebuild archive \
+          echo "🎯 正在编译工程: $PROJECT_PATH"
+          echo "🎯 使用 Scheme: $SCHEME_NAME"
+          
+          # 执行编译，不指定输出目录，让它走默认路径
+          xcodebuild build \
             -project "$PROJECT_PATH" \
             -scheme "$SCHEME_NAME" \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath "./build_output/YOLO.xcarchive" \
-            CODE_SIGN_IDENTITY="" \
+            -arch arm64 \
+            CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGN_IDENTITY=""
 
-      - name: 3. 正确提取 IPA
+      - name: 3. 搜索并提取产物 (暴力搜寻)
         run: |
           mkdir -p Payload
-          # 核心修正：拷贝完整的 .app 目录，这才是软件的本体
-          cp -r ./build_output/YOLO.xcarchive/Products/Applications/*.app ./Payload/
+          # 在 Xcode 默认的 DerivedData 目录下疯狂搜索 .app
+          APP_DIR=$(find ~/Library/Developer/Xcode/DerivedData -name "*.app" -type d | grep "Release-iphoneos" | head -n 1)
+          
+          if [ -z "$APP_DIR" ]; then
+            echo "❌ 严重错误：在服务器上没找到编译好的 .app！"
+            exit 1
+          fi
+          
+          echo "✅ 找到目标 App: $APP_DIR"
+          # 拷贝整个文件夹内容
+          cp -r "$APP_DIR" Payload/
           zip -qr YOLO-Full-App.ipa Payload
+          
+          # 顺便看一下大小，确保不是空的
+          du -sh YOLO-Full-App.ipa
 
       - name: 4. 发货
         uses: actions/upload-artifact@v4

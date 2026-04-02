@@ -14,40 +14,65 @@ jobs:
         with:
           submodules: recursive
 
-      - name: 2. 配置 Node 环境 (消除警告)
+      - name: 2. 配置Node环境（消除警告）
         uses: actions/setup-node@v4
         with:
           node-version: 24
 
-      - name: 3. 初始化环境
+      - name: 3. 全自动定位Xcode项目（彻底解决路径问题）
+        id: find_project
         run: |
           set -euo pipefail
-          echo "=== 环境检查 ==="
-          ls -la "${{ github.workspace }}"
-          echo "================="
+          echo "=== 扫描仓库目录结构 ==="
+          ls -R "${{ github.workspace }}"
+          echo "========================="
 
-      - name: 4. 清理旧缓存
+          # 全自动查找仓库里所有的.xcodeproj项目文件
+          PROJECT_FILE=$(find "${{ github.workspace }}" -name "*.xcodeproj" -type d | head -n 1)
+          
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "❌ 错误：仓库中未找到任何Xcode项目文件(.xcodeproj)"
+            exit 1
+          fi
+
+          # 自动提取项目信息
+          PROJECT_DIR=$(dirname "$PROJECT_FILE")
+          PROJECT_NAME=$(basename "$PROJECT_FILE" .xcodeproj)
+          
+          echo "✅ 自动定位项目成功！"
+          echo "项目名: $PROJECT_NAME"
+          echo "项目路径: $PROJECT_DIR"
+          
+          # 把项目信息输出到环境变量，后续步骤直接调用
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_ENV
+
+      - name: 4. 清理Xcode旧缓存
         run: |
           set -euo pipefail
           rm -rf ~/Library/Developer/Xcode/DerivedData
-          echo "✅ Xcode 缓存已清理"
+          xcodebuild clean \
+            -project "${{ env.PROJECT_DIR }}/${{ env.PROJECT_NAME }}.xcodeproj" \
+            -scheme "${{ env.PROJECT_NAME }}" \
+            -configuration Release
+          echo "✅ Xcode缓存清理完成"
 
-      - name: 5. 解析依赖
+      - name: 5. 解析项目依赖
         run: |
           set -euo pipefail
-          cd "${{ github.workspace }}/示例应用程序/YOLORealTimeUIKit"
+          cd "${{ env.PROJECT_DIR }}"
           xcodebuild -resolvePackageDependencies \
-            -project YOLORealTimeUIKit.xcodeproj \
-            -scheme YOLORealTimeUIKit
+            -project "${{ env.PROJECT_NAME }}.xcodeproj" \
+            -scheme "${{ env.PROJECT_NAME }}"
+          echo "✅ 依赖解析完成"
 
-      - name: 6. 开始归档
+      - name: 6. 真机归档（生成完整App）
         run: |
           set -euo pipefail
-          cd "${{ github.workspace }}/示例应用程序/YOLORealTimeUIKit"
-          
+          cd "${{ env.PROJECT_DIR }}"
           xcodebuild archive \
-            -project YOLORealTimeUIKit.xcodeproj \
-            -scheme YOLORealTimeUIKit \
+            -project "${{ env.PROJECT_NAME }}.xcodeproj" \
+            -scheme "${{ env.PROJECT_NAME }}" \
             -configuration Release \
             -sdk iphoneos \
             -archivePath "${{ github.workspace }}/YOLO.xcarchive" \
@@ -55,37 +80,61 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE="" \
             ENABLE_BITCODE=NO
+          echo "✅ 项目归档完成"
 
-      - name: 7. 验证归档文件
+      - name: 7. 验证归档文件（防止空壳）
         run: |
           set -euo pipefail
-          APP_PATH="${{ github.workspace }}/YOLO.xcarchive/Products/Applications/YOLORealTimeUIKit.app"
+          APP_PATH="${{ github.workspace }}/YOLO.xcarchive/Products/Applications/${{ env.PROJECT_NAME }}.app"
           
           if [ ! -d "$APP_PATH" ]; then
-            echo "❌ 归档失败，未找到 .app"
+            echo "❌ 归档失败，未找到.app应用文件"
             exit 1
           fi
-          
-          echo "✅ 归档成功: $APP_PATH"
-          ls -lh "$APP_PATH"
 
-      - name: 8. 打包 IPA
+          # 验证核心二进制文件存在
+          EXECUTABLE_NAME=$(defaults read "$APP_PATH/Info.plist" CFBundleExecutable)
+          if [ ! -f "$APP_PATH/$EXECUTABLE_NAME" ]; then
+            echo "❌ 归档失败，未找到核心二进制文件"
+            exit 1
+          fi
+
+          echo "✅ 归档验证通过！"
+          echo "应用路径: $APP_PATH"
+          echo "核心二进制: $EXECUTABLE_NAME"
+          ls -lh "$APP_PATH/$EXECUTABLE_NAME"
+
+      - name: 8. 封装标准侧载IPA
         run: |
           set -euo pipefail
+          # 清理旧文件，创建标准Payload目录
           rm -rf Payload YOLO-Final.ipa
           mkdir -p Payload
-          
-          cp -R "${{ github.workspace }}/YOLO.xcarchive/Products/Applications/YOLORealTimeUIKit.app" Payload/
-          
-          find Payload -name ".DS_Store" -delete
-          zip -qry YOLO-Final.ipa Payload
-          
-          IPA_SIZE=$(du -sh YOLO-Final.ipa | awk '{print $1}')
-          echo "📦 打包完成: $IPA_SIZE"
 
-      - name: 9. 上传产物
+          # 复制归档好的App到Payload
+          cp -R "${{ github.workspace }}/YOLO.xcarchive/Products/Applications/${{ env.PROJECT_NAME }}.app" Payload/
+
+          # 清理无用文件，减小IPA体积
+          find Payload -name ".DS_Store" -delete
+          find Payload -name "__MACOSX" -exec rm -rf {} + 2>/dev/null || true
+
+          # 打包成IPA
+          zip -qry YOLO-Final.ipa Payload
+
+          # 验证IPA大小，防止空壳
+          IPA_SIZE_KB=$(du -k YOLO-Final.ipa | cut -f1)
+          IPA_SIZE=$(du -sh YOLO-Final.ipa | awk '{print $1}')
+          
+          if [ "$IPA_SIZE_KB" -lt 10240 ]; then
+            echo "❌ 打包失败，生成空壳IPA，大小仅${IPA_SIZE}"
+            exit 1
+          fi
+
+          echo "📦 IPA打包完成！最终大小: $IPA_SIZE"
+
+      - name: 9. 上传最终IPA产物
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-iOS-IPA
+          name: YOLO-iOS-Final-IPA
           path: YOLO-Final.ipa
           retention-days: 7

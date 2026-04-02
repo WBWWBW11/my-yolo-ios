@@ -17,7 +17,6 @@ jobs:
           PROJECT_NAME=$(basename "$PROJECT_PATH")
           SCHEME_NAME=${PROJECT_NAME%.*}
           
-          # 这一步会把你的 .mlpackage 和所有逻辑打包进 xcarchive
           xcodebuild archive \
             -project "$PROJECT_PATH" \
             -scheme "$SCHEME_NAME" \
@@ -31,7 +30,7 @@ jobs:
       - name: 3. 正确提取 IPA
         run: |
           mkdir -p Payload
-          # 核心修正：从 xcarchive 的标准路径下拷贝完整的 .app 目录
+          # 核心修正：拷贝完整的 .app 目录，这才是软件的本体
           cp -r ./build_output/YOLO.xcarchive/Products/Applications/*.app ./Payload/
           zip -qr YOLO-Full-App.ipa Payload
 

@@ -11,34 +11,32 @@ jobs:
       - name: 1. 下载源码
         uses: actions/checkout@v4
 
-      - name: 2. 自动寻找工程并免签编译 (核心魔法)
+      - name: 2. 满血编译（带模型和资源）
         run: |
           PROJECT_PATH=$(find . -name "*.xcodeproj" | head -n 1)
           PROJECT_NAME=$(basename "$PROJECT_PATH")
           SCHEME_NAME=${PROJECT_NAME%.*}
           
-          echo "🎯 发现苹果工程: $PROJECT_NAME, 使用 Scheme: $SCHEME_NAME"
-          
-          xcodebuild clean build \
+          # 这一步会把你的 .mlpackage 和所有逻辑打包进 xcarchive
+          xcodebuild archive \
             -project "$PROJECT_PATH" \
             -scheme "$SCHEME_NAME" \
             -configuration Release \
             -sdk iphoneos \
-            -arch arm64 \
+            -archivePath "./build_output/YOLO.xcarchive" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            COMPILER_INDEX_STORE_ENABLE=NO \
-            CONFIGURATION_BUILD_DIR="$(pwd)/build_output"
+            CODE_SIGNING_ALLOWED=NO
 
-      - name: 3. 组装成纯正的 iOS 安装包
+      - name: 3. 正确提取 IPA
         run: |
           mkdir -p Payload
-          mv build_output/*.app Payload/
-          zip -qr YOLO-App.ipa Payload
+          # 核心修正：从 xcarchive 的标准路径下拷贝完整的 .app 目录
+          cp -r ./build_output/YOLO.xcarchive/Products/Applications/*.app ./Payload/
+          zip -qr YOLO-Full-App.ipa Payload
 
       - name: 4. 发货
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-Sideload-IPA
-          path: YOLO-App.ipa
+          name: YOLO-FULL-IPA
+          path: YOLO-Full-App.ipa

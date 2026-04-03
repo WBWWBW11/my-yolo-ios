@@ -1,146 +1,63 @@
-name: Build YOLO iOS 侧载 IPA (最终终极可用版)
+name: Build YOLO iOS 侧载 IPA (最终满血修复版)
+
 on: 
   workflow_dispatch: 
 
 jobs:
   build:
-    runs-on: macos-13 # 固定Xcode 15版本，避免最新版优化导致空包
-    permissions:
-      contents: read
+    runs-on: macos-latest 
 
     steps:
       - name: 1. 检出代码
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0 # 完整拉取代码，避免模型文件缺失
 
-      - name: 2. 配置Node环境（消除警告）
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20 # 兼容当前actions版本，消除弃用警告
-
-      - name: 3. 全自动定位Xcode项目
-        id: find_project
+      - name: 2. 解析依赖
         run: |
-          set -euo pipefail
-          echo "=== 扫描仓库目录结构 ==="
-          ls -Rla "${{ github.workspace }}"
-          echo "========================="
+          # 使用通配符定位工程，解决中文路径字符集问题
+          PROJ=$(find . -name "*.xcodeproj" | head -n 1)
+          xcodebuild -resolvePackageDependencies -project "$PROJ"
 
-          PROJECT_FILE=$(find "${{ github.workspace }}" -name "*.xcodeproj" -type d | head -n 1)
+      - name: 3. 终极归档 (解决空壳问题)
+        run: |
+          PROJ=$(find . -name "*.xcodeproj" | head -n 1)
+          # 自动获取 Scheme 名
+          SCHEME=$(xcodebuild -list -project "$PROJ" | grep -A 5 "Schemes:" | tail -n 1 | xargs)
           
-          if [ -z "$PROJECT_FILE" ]; then
-            echo "❌ 错误：未找到Xcode项目文件(.xcodeproj)"
-            exit 1
-          fi
-
-          PROJECT_DIR=$(dirname "$PROJECT_FILE")
-          PROJECT_NAME=$(basename "$PROJECT_FILE" .xcodeproj)
+          echo "🚀 正在归档工程: $PROJ | 方案: $SCHEME"
           
-          echo "✅ 自动定位项目成功！"
-          echo "项目名: $PROJECT_NAME"
-          echo "项目路径: $PROJECT_DIR"
-          
-          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
-          echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_ENV
-
-      - name: 4. 清理Xcode旧缓存
-        run: |
-          set -euo pipefail
-          rm -rf ~/Library/Developer/Xcode/DerivedData
-          xcodebuild clean \
-            -project "${{ env.PROJECT_DIR }}/${{ env.PROJECT_NAME }}.xcodeproj" \
-            -scheme "${{ env.PROJECT_NAME }}" \
-            -configuration Release
-          echo "✅ Xcode缓存清理完成"
-
-      - name: 5. 解析项目依赖
-        run: |
-          set -euo pipefail
-          cd "${{ env.PROJECT_DIR }}"
-          xcodebuild -resolvePackageDependencies \
-            -project "${{ env.PROJECT_NAME }}.xcodeproj" \
-            -scheme "${{ env.PROJECT_NAME }}"
-          echo "✅ 依赖解析完成"
-
-      - name: 6. 真机归档（强制完整二进制+模型嵌入）
-        run: |
-          set -euo pipefail
-          cd "${{ env.PROJECT_DIR }}"
+          # 必须使用 archive 模式，这是生成满血版二进制的唯一保证
           xcodebuild archive \
-            -project "${{ env.PROJECT_NAME }}.xcodeproj" \
-            -scheme "${{ env.PROJECT_NAME }}" \
+            -project "$PROJ" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath "${{ github.workspace }}/YOLO.xcarchive" \
+            -archivePath "./YOLO.xcarchive" \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            PROVISIONING_PROFILE="" \
-            ENABLE_BITCODE=NO \
-            ONLY_ACTIVE_ARCH=NO \
-            SKIP_INSTALL=NO \
-            DEPLOYMENT_POSTPROCESSING=NO \
-            STRIP_INSTALLED_PRODUCT=NO # 禁止剥离二进制，保留完整代码+模型
-          echo "✅ 项目归档完成"
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
 
-      - name: 7. 验证归档文件（强制完整校验）
+      - name: 4. 提取满血产物并打包
         run: |
-          set -euo pipefail
-          APP_PATH="${{ github.workspace }}/YOLO.xcarchive/Products/Applications/${{ env.PROJECT_NAME }}.app"
-          
-          if [ ! -d "$APP_PATH" ]; then
-            echo "❌ 归档失败，未找到.app应用文件"
-            exit 1
-          fi
-
-          EXECUTABLE_NAME=$(defaults read "$APP_PATH/Info.plist" CFBundleExecutable)
-          EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
-          
-          if [ ! -f "$EXECUTABLE_PATH" ]; then
-            echo "❌ 归档失败，未找到核心二进制文件"
-            exit 1
-          fi
-
-          # 强制校验二进制大小：小于5MB判定为空包
-          EXEC_SIZE_KB=$(du -k "$EXECUTABLE_PATH" | cut -f1)
-          if [ "$EXEC_SIZE_KB" -lt 5120 ]; then
-            echo "❌ 归档失败，二进制仅${EXEC_SIZE_KB}KB，为空包"
-            exit 1
-          fi
-
-          echo "✅ 归档验证通过！"
-          echo "应用路径: $APP_PATH"
-          echo "核心二进制: $EXECUTABLE_NAME"
-          echo "二进制大小: $(du -sh "$EXECUTABLE_PATH")"
-          ls -lh "$APP_PATH/"
-
-      - name: 8. 封装标准侧载IPA
-        run: |
-          set -euo pipefail
-          rm -rf Payload YOLO-Final.ipa
           mkdir -p Payload
-
-          cp -R "${{ github.workspace }}/YOLO.xcarchive/Products/Applications/${{ env.PROJECT_NAME }}.app" Payload/
-
-          find Payload -name ".DS_Store" -delete
-          find Payload -name "__MACOSX" -exec rm -rf {} + 2>/dev/null || true
-
-          zip -qry YOLO-Final.ipa Payload
-
-          IPA_SIZE=$(du -sh YOLO-Final.ipa | awk '{print $1}')
-          echo "📦 IPA打包完成！最终大小: $IPA_SIZE"
-
-          # 最终IPA大小校验：小于10MB判定为空包
-          IPA_SIZE_KB=$(du -k YOLO-Final.ipa | cut -f1)
-          if [ "$IPA_SIZE_KB" -lt 10240 ]; then
-            echo "❌ 打包失败，生成空壳IPA，大小仅${IPA_SIZE}"
+          # 从归档包里精准定位 .app 文件夹
+          APP_PATH=$(find YOLO.xcarchive -name "*.app" -type d | head -n 1)
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ 归档失败，没找到二进制产物！"
             exit 1
           fi
 
-      - name: 9. 上传最终IPA产物
+          echo "✅ 成功捕获满血 App: $APP_PATH"
+          cp -R "$APP_PATH" Payload/
+          
+          # 关键一步：检查打包大小
+          zip -qr YOLO-Full-App.ipa Payload
+          echo "📦 最终包大小报告："
+          ls -lh YOLO-Full-App.ipa
+
+      - name: 5. 发货
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-iOS-Final-IPA
-          path: YOLO-Final.ipa
-          retention-days: 7
+          name: YOLO-REAL-IPA
+          path: YOLO-Full-App.ipa

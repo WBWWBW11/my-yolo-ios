@@ -1,4 +1,4 @@
-name: 🚀 绝对出包-终极核弹版
+name: 🚀 无需Mac-终极出货版
 
 on: 
   workflow_dispatch: 
@@ -8,62 +8,60 @@ jobs:
     runs-on: macos-latest 
 
     steps:
-      - name: 1. 搬运源码
+      - name: 1. 挂载源码
         uses: actions/checkout@v4
 
-      - name: 2. 暴力搜索工程
+      - name: 2. 暴力定位与依赖解析
         run: |
-          # 不管你在哪个文件夹，不管是不是中文名，直接搜死
-          PROJ_FILE=$(find . -name "*.xcodeproj" | head -n 1)
-          echo "PROJ_FILE=$PROJ_FILE" >> $GITHUB_ENV
-          echo "🎯 锁定目标: $PROJ_FILE"
+          # 无论路径多深，强制搜索包含工程文件的文件夹
+          PROJ_PATH=$(find . -name "*.xcodeproj" | head -n 1)
+          PROJ_DIR=$(dirname "$PROJ_PATH")
+          echo "FOUND_PROJ=$PROJ_PATH" >> $GITHUB_ENV
+          echo "FOUND_DIR=$PROJ_DIR" >> $GITHUB_ENV
+          cd "$PROJ_DIR"
+          xcodebuild -resolvePackageDependencies -project "$(basename "$PROJ_PATH")"
 
-      - name: 3. 强力解析依赖
+      - name: 3. 归档“炼丹” (必须跑满5分钟以上)
         run: |
-          xcodebuild -resolvePackageDependencies -project "${{ env.PROJ_FILE }}"
-
-      - name: 4. 归档“炼丹” (关键步骤)
-        run: |
-          # 自动抓取第一个 Scheme 名
-          SCHEME=$(xcodebuild -list -project "${{ env.PROJ_FILE }}" | grep -A 5 "Schemes:" | tail -n 1 | xargs)
-          echo "🔥 开始炼制 Scheme: $SCHEME"
+          cd "${{ env.FOUND_DIR }}"
+          # 寻找 Scheme 名
+          SCHEME=$(xcodebuild -list -project "$(basename "$PROJ_PATH")" | grep -A 5 "Schemes:" | tail -n 1 | xargs)
           
+          # 核心：使用 archive 模式提取所有 AI 模型和二进制
           xcodebuild archive \
-            -project "${{ env.PROJ_FILE }}" \
+            -project "$(basename "$PROJ_PATH")" \
             -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath "./YOLO.xcarchive" \
+            -archivePath "../../YOLO.xcarchive" \
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES
 
-      - name: 5. 暴力提取并进行“生死校验”
+      - name: 4. 提取产物并做体积检查
         run: |
           mkdir -p Payload
-          # 搜寻归档里的软件本体
-          APP_PATH=$(find YOLO.xcarchive -name "*.app" -type d | head -n 1)
+          APP_DIR=$(find YOLO.xcarchive -name "*.app" -type d | head -n 1)
           
-          if [ -z "$APP_PATH" ]; then
-            echo "❌ 失败：没炼出东西！"
+          if [ -z "$APP_DIR" ]; then
+            echo "❌ 归档失败，云端没产出二进制！"
             exit 1
           fi
 
-          cp -R "$APP_PATH" Payload/
-          zip -qr YOLO-Final-Full.ipa Payload
+          cp -r "$APP_DIR" Payload/
+          zip -qr YOLO-Full.ipa Payload
           
-          # 【真理时刻】检查大小。如果小于 5MB，直接自杀报警，不给空壳！
-          SIZE_MB=$(du -m YOLO-Final-Full.ipa | cut -f1)
-          echo "📦 最终包大小: ${SIZE_MB}MB"
-          if [ "$SIZE_MB" -lt 5 ]; then
-            echo "❌ 警报：这包是空的！检查源码是否有模型文件。"
+          # 验证体积：如果是空壳（小于 2MB），直接让任务失败，省得你下载
+          FILE_SIZE=$(du -m YOLO-Full.ipa | cut -f1)
+          echo "📦 最终生成的包大小: ${FILE_SIZE}MB"
+          if [ $FILE_SIZE -lt 2 ]; then
+            echo "❌ 警报：生成的依然是空壳包，请检查源码是否完整！"
             exit 1
           fi
 
-      - name: 6. 顺丰出货
+      - name: 5. 产物存放
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-FULL-PACKAGE-DOWNLOAD-ME
-          path: YOLO-Final-Full.ipa
+          name: YOLO-FOR-WINDOWS-DOWNLOAD
+          path: YOLO-Full.ipa

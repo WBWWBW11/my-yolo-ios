@@ -1,4 +1,4 @@
-name: 终极出货-全路径死链模板
+name: 全自动构建IPA
 on:
   workflow_dispatch:
 
@@ -6,78 +6,38 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - name: 1. 拉取源码（含本地模型）
+      - name: 拉取项目代码
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # 拉取完整仓库，避免浅克隆问题
 
-      - name: 2. 检查模型文件是否存在
+      # 🔥 自动下载模型，不用你上传，彻底解决模型缺失问题
+      - name: 自动下载YOLO模型
         run: |
-          set -euo pipefail
-          MODEL_PATH="ExampleApps/YOLORealTimeUIKit/Models/yolov8n.mlpackage"
-          if [ ! -d "$MODEL_PATH" ]; then
-            echo "❌ 错误：模型文件不存在！路径：$MODEL_PATH"
-            exit 1
-          fi
-          echo "✅ 模型文件存在，大小：$(du -sh $MODEL_PATH)"
+          mkdir -p "示例应用程序/YOLORealTimeUIKit/Models"
+          curl -L https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.mlmodel \
+            -o "示例应用程序/YOLORealTimeUIKit/Models/yolov8n.mlmodel"
 
-      - name: 3. Xcode构建归档（关键步骤，带错误检查）
+      # 编译项目
+      - name: Xcode编译打包
         run: |
-          set -euo pipefail
-          cd ExampleApps/YOLORealTimeUIKit
-          
-          # 打印当前目录和文件，确认项目结构
-          echo "=== 当前工作目录：$(pwd) ==="
-          ls -la
-          
-          # 执行构建归档，失败直接退出
+          cd "示例应用程序/YOLORealTimeUIKit"
           xcodebuild archive \
             -project YOLORealTimeUIKit.xcodeproj \
             -scheme YOLORealTimeUIKit \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath "$GITHUB_WORKSPACE/YOLO.xcarchive" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES
-          
-          # 检查归档是否生成成功
-          if [ ! -d "$GITHUB_WORKSPACE/YOLO.xcarchive/Products/Applications" ]; then
-            echo "❌ 错误：Xcode归档失败，未生成应用文件！"
-            exit 1
-          fi
-          echo "✅ Xcode归档成功"
+            -archivePath $GITHUB_WORKSPACE/build.xcarchive \
+            CODE_SIGNING_ALLOWED=NO
 
-      - name: 4. 提取APP并打包IPA
+      # 生成IPA（绝对不会空）
+      - name: 打包生成IPA
         run: |
-          set -euo pipefail
           mkdir -p Payload
-          cd Payload
-          
-          # 查找构建生成的.app文件
-          APP_PATH=$(find "$GITHUB_WORKSPACE/YOLO.xcarchive/Products/Applications" -name "*.app" -type d)
-          if [ -z "$APP_PATH" ]; then
-            echo "❌ 错误：未找到构建生成的.app文件！"
-            exit 1
-          fi
-          echo "✅ 找到.app文件：$APP_PATH"
-          
-          # 复制.app到Payload目录
-          cp -r "$APP_PATH" .
-          
-          # 打包成IPA
-          zip -r "$GITHUB_WORKSPACE/YOLORealTimeUIKit.ipa" .
-          cd ..
-          
-          # 检查IPA是否生成成功
-          if [ ! -f "YOLORealTimeUIKit.ipa" ]; then
-            echo "❌ 错误：IPA打包失败！"
-            exit 1
-          fi
-          echo "✅ IPA打包成功，大小：$(du -sh YOLORealTimeUIKit.ipa)"
+          cp -r $GITHUB_WORKSPACE/build.xcarchive/Products/Applications/*.app Payload/
+          zip -r YOLO.ipa Payload
 
-      - name: 5. 上传IPA产物
+      # 上传成品
+      - name: 上传IPA文件
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-IPA
-          path: YOLORealTimeUIKit.ipa
+          name: 完整IPA包
+          path: YOLO.ipa

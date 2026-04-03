@@ -1,4 +1,4 @@
-name: 🚀 Mac-终极出货版-正式通关
+name: 🚀 终极出货-全路径死锁版
 
 on: 
   workflow_dispatch: 
@@ -11,30 +11,37 @@ jobs:
       - name: 1. 挂载源码
         uses: actions/checkout@v4
 
-      - name: 2. 定位工程并存入全局变量
+      - name: 2. 定位并锁定路径
         run: |
-          # 强制寻找工程文件
+          # 找到工程文件
           RAW_PATH=$(find . -name "*.xcodeproj" | head -n 1)
           echo "FOUND_PROJ_PATH=$RAW_PATH" >> $GITHUB_ENV
           echo "FOUND_PROJ_DIR=$(dirname "$RAW_PATH")" >> $GITHUB_ENV
           echo "FOUND_PROJ_NAME=$(basename "$RAW_PATH")" >> $GITHUB_ENV
-          echo "🎯 找到目标: $RAW_PATH"
+          echo "🎯 目标锁定: $RAW_PATH"
 
       - name: 3. 强力解析依赖
         run: |
           cd "${{ env.FOUND_PROJ_DIR }}"
           xcodebuild -resolvePackageDependencies -project "${{ env.FOUND_PROJ_NAME }}"
 
-      - name: 4. 归档“炼丹” (这次绝对有炉子)
+      - name: 4. 归档“炼丹” (强制指定方案)
         run: |
           cd "${{ env.FOUND_PROJ_DIR }}"
-          # 自动抓取 Scheme
-          SCHEME=$(xcodebuild -list -project "${{ env.FOUND_PROJ_NAME }}" | grep -A 5 "Schemes:" | tail -n 1 | xargs)
-          echo "🚀 正在编译方案: $SCHEME"
+          
+          # 列出所有方案供排查（万一失败看日志）
+          echo "📋 当前工程包含的所有方案："
+          xcodebuild -list -project "${{ env.FOUND_PROJ_NAME }}"
+          
+          # 尝试自动获取方案，如果获取不到，则强制使用项目名
+          DETECTED_SCHEME=$(xcodebuild -list -project "${{ env.FOUND_PROJ_NAME }}" | sed -n '/Schemes:/,$p' | tail -n +2 | head -n 1 | xargs)
+          FINAL_SCHEME=${DETECTED_SCHEME:-YOLORealTimeUIKit}
+          
+          echo "🚀 最终决定使用的方案: $FINAL_SCHEME"
           
           xcodebuild archive \
             -project "${{ env.FOUND_PROJ_NAME }}" \
-            -scheme "$SCHEME" \
+            -scheme "$FINAL_SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -archivePath "../../YOLO.xcarchive" \

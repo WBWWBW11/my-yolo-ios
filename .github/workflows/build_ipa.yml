@@ -1,4 +1,4 @@
-name: Build YOLO iOS 侧载 IPA (核弹级稳健版)
+name: Build YOLO iOS 侧载 IPA (终极满血版)
 
 on: 
   workflow_dispatch: 
@@ -8,26 +8,28 @@ jobs:
     runs-on: macos-latest 
 
     steps:
-      - name: 1. 检出代码
+      - name: 1. 拉取代码
         uses: actions/checkout@v4
 
-      - name: 2. 强行锁定并解析依赖
+      - name: 2. 强力解析依赖
         run: |
-          # 针对你的仓库结构，直接进入核心目录
-          # 如果你的文件夹名还是“示例应用程序”，请确保代码中的路径完全匹配
-          cd "示例应用程序/YOLORealTimeUIKit" || cd "ExampleApps/YOLORealTimeUIKit"
-          echo "📦 正在强制解析 Swift Package 依赖..."
-          xcodebuild -resolvePackageDependencies -project YOLORealTimeUIKit.xcodeproj
+          # 自动寻找第一个 xcodeproj 文件夹并进入其目录
+          PROJ_PATH=$(find . -name "*.xcodeproj" | head -n 1)
+          PROJ_DIR=$(dirname "$PROJ_PATH")
+          cd "$PROJ_DIR"
+          xcodebuild -resolvePackageDependencies -project "$(basename "$PROJ_PATH")"
 
-      - name: 3. 归档编译 (拒绝 480KB 空壳)
+      - name: 3. 终极归档 (拒绝空壳)
         run: |
-          # 再次进入目录，确保环境一致
-          cd "示例应用程序/YOLORealTimeUIKit" || cd "ExampleApps/YOLORealTimeUIKit"
+          PROJ_PATH=$(find . -name "*.xcodeproj" | head -n 1)
+          PROJ_DIR=$(dirname "$PROJ_PATH")
+          SCHEME=$(xcodebuild -list -project "$PROJ_PATH" | grep -A 5 "Schemes:" | tail -n 1 | xargs)
           
-          echo "🏗️ 开始归档 (Archive)..."
+          cd "$PROJ_DIR"
+          # 强制生成归档，这是唯一能产生几十MB大包的方法
           xcodebuild archive \
-            -project YOLORealTimeUIKit.xcodeproj \
-            -scheme YOLORealTimeUIKit \
+            -project "$(basename "$PROJ_PATH")" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -archivePath "../../YOLO.xcarchive" \
@@ -35,33 +37,32 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            COMPILER_INDEX_STORE_ENABLE=NO
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
 
-      - name: 4. 组装并进行“生死检查”
+      - name: 4. 提取并进行“生死检查”
         run: |
           mkdir -p Payload
-          # 精准定位生成的二进制文件
-          APP_DIR=$(find YOLO.xcarchive -name "*.app" -type d | head -n 1)
+          # 从归档文件中掏出真正的软件本体
+          APP_PATH=$(find YOLO.xcarchive -name "*.app" -type d | head -n 1)
           
-          if [ -z "$APP_DIR" ]; then
-            echo "❌ 严重错误：归档失败，没找到 .app 文件夹！"
-            exit 1
-          fi
-          
-          cp -r "$APP_DIR" Payload/
-          zip -qr YOLO-Full-App.ipa Payload
-          
-          # 【真理检查】如果包小于 1MB，说明又是空壳，直接报错停止
-          FILE_SIZE=$(stat -f%z "YOLO-Full-App.ipa")
-          echo "📦 最终生成的 IPA 大小: $FILE_SIZE 字节"
-          if [ $FILE_SIZE -lt 1000000 ]; then
-            echo "❌ 警报：生成的包太小 ($FILE_SIZE)，这绝对是个空壳！请检查脚本中的路径是否正确。"
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ 严重错误：没找到二进制文件！"
             exit 1
           fi
 
-      - name: 5. 交付产物
+          cp -R "$APP_PATH" Payload/
+          zip -qr YOLO-Full.ipa Payload
+          
+          # 【真理时刻】检查大小。如果小于 2MB，说明是空壳，直接报错不让你下载。
+          SIZE=$(du -m YOLO-Full.ipa | cut -f1)
+          echo "📦 最终包大小: ${SIZE}MB"
+          if [ "$SIZE" -lt 2 ]; then
+            echo "❌ 警报：包太小了，这绝对不对！"
+            exit 1
+          fi
+
+      - name: 5. 产物交付
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-FINAL-IPA
-          path: YOLO-Full-App.ipa
+          name: YOLO-FINAL-REAL-IPA
+          path: YOLO-Full.ipa

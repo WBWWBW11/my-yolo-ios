@@ -1,4 +1,4 @@
-name: 全自动构建IPA
+name: 调试版构建IPA
 on:
   workflow_dispatch:
 
@@ -9,17 +9,36 @@ jobs:
       - name: 拉取项目代码
         uses: actions/checkout@v4
 
-      # 🔥 自动下载模型，不用你上传，彻底解决模型缺失问题
+      # 🔍 调试步骤：打印所有文件，确认项目位置
+      - name: 打印目录结构
+        run: |
+          echo "=== 当前工作目录 ==="
+          pwd
+          echo "=== 列出所有文件和目录 ==="
+          ls -laR
+        shell: bash
+
+      # 自动下载模型（和之前一样）
       - name: 自动下载YOLO模型
         run: |
           mkdir -p "示例应用程序/YOLORealTimeUIKit/Models"
           curl -L https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.mlmodel \
             -o "示例应用程序/YOLORealTimeUIKit/Models/yolov8n.mlmodel"
 
-      # 编译项目
-      - name: Xcode编译打包
+      # 关键：先cd到项目目录，再构建
+      - name: Xcode编译项目
         run: |
+          # 先进入正确的目录（根据上面的调试输出修改）
           cd "示例应用程序/YOLORealTimeUIKit"
+          
+          # 再检查项目文件是否存在
+          if [ ! -f "YOLORealTimeUIKit.xcodeproj/project.pbxproj" ]; then
+            echo "❌ 错误：找不到Xcode项目文件！"
+            ls -la
+            exit 1
+          fi
+          
+          # 执行构建
           xcodebuild archive \
             -project YOLORealTimeUIKit.xcodeproj \
             -scheme YOLORealTimeUIKit \
@@ -28,16 +47,16 @@ jobs:
             -archivePath $GITHUB_WORKSPACE/build.xcarchive \
             CODE_SIGNING_ALLOWED=NO
 
-      # 生成IPA（绝对不会空）
-      - name: 打包生成IPA
+      # 打包IPA
+      - name: 生成IPA文件
         run: |
           mkdir -p Payload
           cp -r $GITHUB_WORKSPACE/build.xcarchive/Products/Applications/*.app Payload/
           zip -r YOLO.ipa Payload
 
-      # 上传成品
-      - name: 上传IPA文件
+      # 上传IPA
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: 完整IPA包
+          name: 最终IPA包
           path: YOLO.ipa

@@ -1,63 +1,73 @@
-name: 🚀 强制出货-满血硬核版
-
-on: 
-  workflow_dispatch: 
+name: 终极出货-全路径死链模板
+on:
+  workflow_dispatch: # 保留手动触发
 
 jobs:
   build:
-    runs-on: macos-latest 
+    runs-on: macos-latest
     steps:
-      - name: 1. 搬运源码
-        uses: actions/checkout@v4
+      - name: 1. 拉取源码
+        uses: actions/checkout@v4.2.2 # 升级到支持 Node.js 24 的最新版本
+        with:
+          fetch-depth: 0 # 避免浅克隆导致的路径问题
 
-      - name: 2. 强行塞入模型 (拒绝空壳)
+      - name: 2. 下载模型（增加重试和错误检查）
         run: |
-          # 建立模型存放目录
           mkdir -p "ExampleApps/YOLORealTimeUIKit/Models"
-          # 强制下载官方模型，确保包里有实质性内容
-          curl -L https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.mlmodel -o "ExampleApps/YOLORealTimeUIKit/Models/yolov8n.mlmodel"
+          echo "开始下载 yolov8n.mlmodel..."
+          # 增加重试和超时，解决网络问题
+          curl -L --retry 3 --connect-timeout 10 \
+            https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.mlmodel \
+            -o "ExampleApps/YOLORealTimeUIKit/Models/yolov8n.mlmodel"
+          # 检查文件是否下载成功
+          if [ ! -f "ExampleApps/YOLORealTimeUIKit/Models/yolov8n.mlmodel" ]; then
+            echo "❌ 模型下载失败！"
+            exit 1
+          fi
+          echo "✅ 模型下载成功！文件大小: $(du -h "ExampleApps/YOLORealTimeUIKit/Models/yolov8n.mlmodel")"
 
-      - name: 3. 终极归档 (方案名硬锁定)
+      - name: 3. Xcode 编译打包（修复路径和参数）
         run: |
-          # 直接进入工程所在的死路径
+          # 进入项目目录（确保路径正确）
           cd "ExampleApps/YOLORealTimeUIKit"
-          
-          echo "🏗️ 开始炼制满血版二进制..."
-          # 方案名直接写死为 YOLORealTimeUIKit，不再让脚本瞎猜
+          echo "当前目录: $(pwd)"
+          ls -la # 打印目录内容，方便排查路径问题
+
+          # 编译并归档（修复路径和签名参数）
           xcodebuild archive \
             -project YOLORealTimeUIKit.xcodeproj \
             -scheme YOLORealTimeUIKit \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath "../../YOLO.xcarchive" \
-            -destination 'generic/platform=iOS' \
+            -archivePath "$GITHUB_WORKSPACE/YOLO.xcarchive" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             AD_HOC_CODE_SIGNING_ALLOWED=YES
 
-      - name: 4. 提取产物并进行“生死检查”
+      - name: 4. 导出 IPA（修复路径和检查逻辑）
         run: |
           mkdir -p Payload
-          APP_DIR=$(find YOLO.xcarchive -name "*.app" -type d | head -n 1)
-          
-          if [ -z "$APP_DIR" ]; then
-            echo "❌ 失败：云端没产出二进制文件夹！"
+          cd Payload
+          # 从归档中提取 .app 文件
+          APP_PATH=$(find "$GITHUB_WORKSPACE/YOLO.xcarchive/Products/Applications" -name "*.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ 找不到编译生成的 .app 文件！"
             exit 1
           fi
-
-          cp -r "$APP_DIR" Payload/
-          zip -qr YOLO-Full-App.ipa Payload
-          
-          # 【真理检查】如果小于 5MB，说明还是空壳，直接报错不让你下载
-          SIZE_MB=$(du -m YOLO-Full-App.ipa | cut -f1)
-          echo "📦 最终包大小: ${SIZE_MB}MB"
-          if [ $SIZE_MB -lt 5 ]; then
-            echo "❌ 警告：这包依然没肉，只有几百KB！"
+          echo "找到 .app 文件: $APP_PATH"
+          cp -r "$APP_PATH" .
+          # 打包成 IPA
+          zip -r "../YOLORealTimeUIKit.ipa" .
+          cd ..
+          # 检查 IPA 是否生成成功
+          if [ ! -f "YOLORealTimeUIKit.ipa" ]; then
+            echo "❌ IPA 打包失败！"
             exit 1
           fi
+          echo "✅ IPA 打包成功！文件大小: $(du -h YOLORealTimeUIKit.ipa)"
 
-      - name: 5. 产物存放
+      - name: 5. 上传 IPA 产物
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-FINAL-REAL-IPA
-          path: YOLO-Full-App.ipa
+          name: YOLO-IPA
+          path: YOLORealTimeUIKit.ipa

@@ -1,4 +1,4 @@
-name: 调试版构建IPA
+name: 自动找项目构建IPA
 on:
   workflow_dispatch:
 
@@ -9,54 +9,55 @@ jobs:
       - name: 拉取项目代码
         uses: actions/checkout@v4
 
-      # 🔍 调试步骤：打印所有文件，确认项目位置
-      - name: 打印目录结构
+      # 🔍 自动查找所有Xcode项目文件
+      - name: 查找Xcode项目
+        id: find_project
         run: |
-          echo "=== 当前工作目录 ==="
-          pwd
-          echo "=== 列出所有文件和目录 ==="
-          ls -laR
-        shell: bash
-
-      # 自动下载模型（和之前一样）
-      - name: 自动下载YOLO模型
-        run: |
-          mkdir -p "示例应用程序/YOLORealTimeUIKit/Models"
-          curl -L https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.mlmodel \
-            -o "示例应用程序/YOLORealTimeUIKit/Models/yolov8n.mlmodel"
-
-      # 关键：先cd到项目目录，再构建
-      - name: Xcode编译项目
-        run: |
-          # 先进入正确的目录（根据上面的调试输出修改）
-          cd "示例应用程序/YOLORealTimeUIKit"
-          
-          # 再检查项目文件是否存在
-          if [ ! -f "YOLORealTimeUIKit.xcodeproj/project.pbxproj" ]; then
-            echo "❌ 错误：找不到Xcode项目文件！"
-            ls -la
+          # 遍历整个仓库，找到所有.xcodeproj文件
+          PROJECT_FILE=$(find . -name "*.xcodeproj" -type d | head -n 1)
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "❌ 仓库里找不到任何.xcodeproj文件！"
             exit 1
           fi
+          echo "✅ 找到项目文件: $PROJECT_FILE"
           
-          # 执行构建
+          # 提取项目路径和名称
+          PROJECT_DIR=$(dirname "$PROJECT_FILE")
+          PROJECT_NAME=$(basename "$PROJECT_FILE" .xcodeproj)
+          
+          # 设置环境变量，后面步骤用
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_OUTPUT
+          echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_OUTPUT
+
+      # 自动下载模型（放在和项目同目录的Models里）
+      - name: 下载YOLO模型
+        run: |
+          mkdir -p ${{ steps.find_project.outputs.PROJECT_DIR }}/Models
+          curl -L https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.mlmodel \
+            -o ${{ steps.find_project.outputs.PROJECT_DIR }}/Models/yolov8n.mlmodel
+
+      # 动态构建，不用硬编码路径
+      - name: Xcode构建归档
+        run: |
+          cd ${{ steps.find_project.outputs.PROJECT_DIR }}
           xcodebuild archive \
-            -project YOLORealTimeUIKit.xcodeproj \
-            -scheme YOLORealTimeUIKit \
+            -project ${{ steps.find_project.outputs.PROJECT_NAME }}.xcodeproj \
+            -scheme ${{ steps.find_project.outputs.PROJECT_NAME }} \
             -configuration Release \
             -sdk iphoneos \
             -archivePath $GITHUB_WORKSPACE/build.xcarchive \
             CODE_SIGNING_ALLOWED=NO
 
       # 打包IPA
-      - name: 生成IPA文件
+      - name: 生成IPA
         run: |
           mkdir -p Payload
-          cp -r $GITHUB_WORKSPACE/build.xcarchive/Products/Applications/*.app Payload/
+          APP_PATH=$(find $GITHUB_WORKSPACE/build.xcarchive/Products/Applications -name "*.app" -type d)
+          cp -r $APP_PATH Payload/
           zip -r YOLO.ipa Payload
 
-      # 上传IPA
-      - name: 上传构建产物
+      - name: 上传IPA
         uses: actions/upload-artifact@v4
         with:
-          name: 最终IPA包
+          name: 最终IPA
           path: YOLO.ipa

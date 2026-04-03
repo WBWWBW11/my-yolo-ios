@@ -1,4 +1,4 @@
-name: 自动找项目构建IPA
+name: 强制检查版构建IPA
 on:
   workflow_dispatch:
 
@@ -9,55 +9,81 @@ jobs:
       - name: 拉取项目代码
         uses: actions/checkout@v4
 
-      # 🔍 自动查找所有Xcode项目文件
+      # 1. 强制查找项目文件，失败立刻终止
       - name: 查找Xcode项目
         id: find_project
         run: |
-          # 遍历整个仓库，找到所有.xcodeproj文件
+          set -euo pipefail
           PROJECT_FILE=$(find . -name "*.xcodeproj" -type d | head -n 1)
           if [ -z "$PROJECT_FILE" ]; then
-            echo "❌ 仓库里找不到任何.xcodeproj文件！"
+            echo "❌ 错误：仓库里找不到任何.xcodeproj文件！"
             exit 1
           fi
           echo "✅ 找到项目文件: $PROJECT_FILE"
-          
-          # 提取项目路径和名称
           PROJECT_DIR=$(dirname "$PROJECT_FILE")
           PROJECT_NAME=$(basename "$PROJECT_FILE" .xcodeproj)
-          
-          # 设置环境变量，后面步骤用
           echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_OUTPUT
           echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_OUTPUT
 
-      # 自动下载模型（放在和项目同目录的Models里）
+      # 2. 下载模型到正确路径
       - name: 下载YOLO模型
         run: |
+          set -euo pipefail
           mkdir -p ${{ steps.find_project.outputs.PROJECT_DIR }}/Models
           curl -L https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.mlmodel \
             -o ${{ steps.find_project.outputs.PROJECT_DIR }}/Models/yolov8n.mlmodel
 
-      # 动态构建，不用硬编码路径
+      # 3. 强制构建，失败立刻终止（关键！）
       - name: Xcode构建归档
         run: |
+          set -euo pipefail
           cd ${{ steps.find_project.outputs.PROJECT_DIR }}
+          echo "当前目录: $(pwd)"
+          ls -la
+          
+          # 执行构建，失败会直接退出
           xcodebuild archive \
             -project ${{ steps.find_project.outputs.PROJECT_NAME }}.xcodeproj \
             -scheme ${{ steps.find_project.outputs.PROJECT_NAME }} \
             -configuration Release \
             -sdk iphoneos \
             -archivePath $GITHUB_WORKSPACE/build.xcarchive \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+          
+          # 强制检查归档是否生成
+          if [ ! -d "$GITHUB_WORKSPACE/build.xcarchive/Products/Applications" ]; then
+            echo "❌ 错误：Xcode构建失败，没有生成应用文件！"
+            exit 1
+          fi
+          echo "✅ 构建成功，归档目录内容:"
+          ls -la $GITHUB_WORKSPACE/build.xcarchive/Products/Applications
 
-      # 打包IPA
-      - name: 生成IPA
+      # 4. 强制打包，确保App被复制
+      - name: 生成IPA文件
         run: |
+          set -euo pipefail
           mkdir -p Payload
+          cd Payload
+          
+          # 查找构建生成的App
           APP_PATH=$(find $GITHUB_WORKSPACE/build.xcarchive/Products/Applications -name "*.app" -type d)
-          cp -r $APP_PATH Payload/
-          zip -r YOLO.ipa Payload
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ 错误：找不到构建生成的App文件！"
+            exit 1
+          fi
+          echo "✅ 找到App文件: $APP_PATH"
+          
+          # 复制App并打包
+          cp -r "$APP_PATH" .
+          zip -r $GITHUB_WORKSPACE/YOLO.ipa .
+          
+          # 检查IPA大小
+          IPA_SIZE=$(du -h $GITHUB_WORKSPACE/YOLO.ipa | awk '{print $1}')
+          echo "✅ IPA生成成功，大小: $IPA_SIZE"
 
-      - name: 上传IPA
+      - name: 上传IPA文件
         uses: actions/upload-artifact@v4
         with:
-          name: 最终IPA
+          name: 有效IPA文件
           path: YOLO.ipa

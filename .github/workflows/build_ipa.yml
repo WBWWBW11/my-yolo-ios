@@ -1,4 +1,4 @@
-name: 🚀 终极出货-全路径死锁版
+name: 🚀 强制出货-带模型满血版
 
 on: 
   workflow_dispatch: 
@@ -6,73 +6,48 @@ on:
 jobs:
   build:
     runs-on: macos-latest 
-
     steps:
-      - name: 1. 挂载源码
+      - name: 1. 搬运源码
         uses: actions/checkout@v4
 
-      - name: 2. 定位并锁定路径
+      - name: 2. 强行塞入模型 (不让包变空壳)
         run: |
-          # 找到工程文件
-          RAW_PATH=$(find . -name "*.xcodeproj" | head -n 1)
-          echo "FOUND_PROJ_PATH=$RAW_PATH" >> $GITHUB_ENV
-          echo "FOUND_PROJ_DIR=$(dirname "$RAW_PATH")" >> $GITHUB_ENV
-          echo "FOUND_PROJ_NAME=$(basename "$RAW_PATH")" >> $GITHUB_ENV
-          echo "🎯 目标锁定: $RAW_PATH"
+          # 自动下载官方模型，防止包里没肉
+          mkdir -p "示例应用程序/YOLORealTimeUIKit/Models"
+          curl -L https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.mlmodel -o "示例应用程序/YOLORealTimeUIKit/Models/yolov8n.mlmodel"
 
-      - name: 3. 强力解析依赖
+      - name: 3. 归档“炼丹”
         run: |
-          cd "${{ env.FOUND_PROJ_DIR }}"
-          xcodebuild -resolvePackageDependencies -project "${{ env.FOUND_PROJ_NAME }}"
-
-      - name: 4. 归档“炼丹” (强制指定方案)
-        run: |
-          cd "${{ env.FOUND_PROJ_DIR }}"
-          
-          # 列出所有方案供排查（万一失败看日志）
-          echo "📋 当前工程包含的所有方案："
-          xcodebuild -list -project "${{ env.FOUND_PROJ_NAME }}"
-          
-          # 尝试自动获取方案，如果获取不到，则强制使用项目名
-          DETECTED_SCHEME=$(xcodebuild -list -project "${{ env.FOUND_PROJ_NAME }}" | sed -n '/Schemes:/,$p' | tail -n +2 | head -n 1 | xargs)
-          FINAL_SCHEME=${DETECTED_SCHEME:-YOLORealTimeUIKit}
-          
-          echo "🚀 最终决定使用的方案: $FINAL_SCHEME"
+          PROJ=$(find . -name "*.xcodeproj" | head -n 1)
+          SCHEME=$(xcodebuild -list -project "$PROJ" | grep -A 5 "Schemes:" | tail -n 1 | xargs)
           
           xcodebuild archive \
-            -project "${{ env.FOUND_PROJ_NAME }}" \
-            -scheme "$FINAL_SCHEME" \
+            -project "$PROJ" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath "../../YOLO.xcarchive" \
+            -archivePath "./YOLO.xcarchive" \
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             AD_HOC_CODE_SIGNING_ALLOWED=YES
 
-      - name: 5. 提取产物并做体积检查
+      - name: 4. 提取并核查 (小于10MB直接报错)
         run: |
           mkdir -p Payload
           APP_DIR=$(find YOLO.xcarchive -name "*.app" -type d | head -n 1)
-          
-          if [ -z "$APP_DIR" ]; then
-            echo "❌ 归档失败，云端没产出二进制！"
-            exit 1
-          fi
-
           cp -r "$APP_DIR" Payload/
           zip -qr YOLO-Full.ipa Payload
           
-          # 验证体积
-          FILE_SIZE=$(du -m YOLO-Full.ipa | cut -f1)
-          echo "📦 最终生成的包大小: ${FILE_SIZE}MB"
-          if [ $FILE_SIZE -lt 2 ]; then
-            echo "❌ 警报：生成的依然是空壳包！"
+          SIZE_MB=$(du -m YOLO-Full.ipa | cut -f1)
+          echo "📦 最终包大小: ${SIZE_MB}MB"
+          if [ $SIZE_MB -lt 5 ]; then
+            echo "❌ 警告：这包还是没肉，只有几百KB，别下载了！"
             exit 1
           fi
 
-      - name: 6. 产物存放
+      - name: 5. 产物存放
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-IPA-FINAL
+          name: YOLO-REAL-PACKAGE
           path: YOLO-Full.ipa

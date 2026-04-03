@@ -1,4 +1,4 @@
-name: 🚀 强制出货-带模型满血版
+name: 🚀 强制出货-满血硬核版
 
 on: 
   workflow_dispatch: 
@@ -10,44 +10,54 @@ jobs:
       - name: 1. 搬运源码
         uses: actions/checkout@v4
 
-      - name: 2. 强行塞入模型 (不让包变空壳)
+      - name: 2. 强行塞入模型 (拒绝空壳)
         run: |
-          # 自动下载官方模型，防止包里没肉
-          mkdir -p "示例应用程序/YOLORealTimeUIKit/Models"
-          curl -L https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.mlmodel -o "示例应用程序/YOLORealTimeUIKit/Models/yolov8n.mlmodel"
+          # 建立模型存放目录
+          mkdir -p "ExampleApps/YOLORealTimeUIKit/Models"
+          # 强制下载官方模型，确保包里有实质性内容
+          curl -L https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.mlmodel -o "ExampleApps/YOLORealTimeUIKit/Models/yolov8n.mlmodel"
 
-      - name: 3. 归档“炼丹”
+      - name: 3. 终极归档 (方案名硬锁定)
         run: |
-          PROJ=$(find . -name "*.xcodeproj" | head -n 1)
-          SCHEME=$(xcodebuild -list -project "$PROJ" | grep -A 5 "Schemes:" | tail -n 1 | xargs)
+          # 直接进入工程所在的死路径
+          cd "ExampleApps/YOLORealTimeUIKit"
           
+          echo "🏗️ 开始炼制满血版二进制..."
+          # 方案名直接写死为 YOLORealTimeUIKit，不再让脚本瞎猜
           xcodebuild archive \
-            -project "$PROJ" \
-            -scheme "$SCHEME" \
+            -project YOLORealTimeUIKit.xcodeproj \
+            -scheme YOLORealTimeUIKit \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath "./YOLO.xcarchive" \
+            -archivePath "../../YOLO.xcarchive" \
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             AD_HOC_CODE_SIGNING_ALLOWED=YES
 
-      - name: 4. 提取并核查 (小于10MB直接报错)
+      - name: 4. 提取产物并进行“生死检查”
         run: |
           mkdir -p Payload
           APP_DIR=$(find YOLO.xcarchive -name "*.app" -type d | head -n 1)
-          cp -r "$APP_DIR" Payload/
-          zip -qr YOLO-Full.ipa Payload
           
-          SIZE_MB=$(du -m YOLO-Full.ipa | cut -f1)
+          if [ -z "$APP_DIR" ]; then
+            echo "❌ 失败：云端没产出二进制文件夹！"
+            exit 1
+          fi
+
+          cp -r "$APP_DIR" Payload/
+          zip -qr YOLO-Full-App.ipa Payload
+          
+          # 【真理检查】如果小于 5MB，说明还是空壳，直接报错不让你下载
+          SIZE_MB=$(du -m YOLO-Full-App.ipa | cut -f1)
           echo "📦 最终包大小: ${SIZE_MB}MB"
           if [ $SIZE_MB -lt 5 ]; then
-            echo "❌ 警告：这包还是没肉，只有几百KB，别下载了！"
+            echo "❌ 警告：这包依然没肉，只有几百KB！"
             exit 1
           fi
 
       - name: 5. 产物存放
         uses: actions/upload-artifact@v4
         with:
-          name: YOLO-REAL-PACKAGE
-          path: YOLO-Full.ipa
+          name: YOLO-FINAL-REAL-IPA
+          path: YOLO-Full-App.ipa

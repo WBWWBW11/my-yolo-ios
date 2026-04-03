@@ -1,10 +1,10 @@
-name: Build YOLO iOS 侧载 IPA (最终终极版)
+name: Build YOLO iOS 侧载 IPA (最终终极可用版)
 on: 
   workflow_dispatch: 
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-13 # 固定Xcode 15版本，避免最新版优化导致空包
     permissions:
       contents: read
 
@@ -13,18 +13,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0 # 完整拉取代码，避免模型文件缺失
 
       - name: 2. 配置Node环境（消除警告）
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20 # 兼容当前actions版本，消除弃用警告
 
       - name: 3. 全自动定位Xcode项目
         id: find_project
         run: |
           set -euo pipefail
           echo "=== 扫描仓库目录结构 ==="
-          ls -R "${{ github.workspace }}"
+          ls -Rla "${{ github.workspace }}"
           echo "========================="
 
           PROJECT_FILE=$(find "${{ github.workspace }}" -name "*.xcodeproj" -type d | head -n 1)
@@ -63,7 +64,7 @@ jobs:
             -scheme "${{ env.PROJECT_NAME }}"
           echo "✅ 依赖解析完成"
 
-      - name: 6. 真机归档（强制完整二进制）
+      - name: 6. 真机归档（强制完整二进制+模型嵌入）
         run: |
           set -euo pipefail
           cd "${{ env.PROJECT_DIR }}"
@@ -78,10 +79,12 @@ jobs:
             PROVISIONING_PROFILE="" \
             ENABLE_BITCODE=NO \
             ONLY_ACTIVE_ARCH=NO \
-            SKIP_INSTALL=NO
+            SKIP_INSTALL=NO \
+            DEPLOYMENT_POSTPROCESSING=NO \
+            STRIP_INSTALLED_PRODUCT=NO # 禁止剥离二进制，保留完整代码+模型
           echo "✅ 项目归档完成"
 
-      - name: 7. 验证归档文件
+      - name: 7. 验证归档文件（强制完整校验）
         run: |
           set -euo pipefail
           APP_PATH="${{ github.workspace }}/YOLO.xcarchive/Products/Applications/${{ env.PROJECT_NAME }}.app"
@@ -92,17 +95,27 @@ jobs:
           fi
 
           EXECUTABLE_NAME=$(defaults read "$APP_PATH/Info.plist" CFBundleExecutable)
-          if [ ! -f "$APP_PATH/$EXECUTABLE_NAME" ]; then
+          EXECUTABLE_PATH="$APP_PATH/$EXECUTABLE_NAME"
+          
+          if [ ! -f "$EXECUTABLE_PATH" ]; then
             echo "❌ 归档失败，未找到核心二进制文件"
+            exit 1
+          fi
+
+          # 强制校验二进制大小：小于5MB判定为空包
+          EXEC_SIZE_KB=$(du -k "$EXECUTABLE_PATH" | cut -f1)
+          if [ "$EXEC_SIZE_KB" -lt 5120 ]; then
+            echo "❌ 归档失败，二进制仅${EXEC_SIZE_KB}KB，为空包"
             exit 1
           fi
 
           echo "✅ 归档验证通过！"
           echo "应用路径: $APP_PATH"
           echo "核心二进制: $EXECUTABLE_NAME"
-          ls -lh "$APP_PATH/$EXECUTABLE_NAME"
+          echo "二进制大小: $(du -sh "$EXECUTABLE_PATH")"
+          ls -lh "$APP_PATH/"
 
-      - name: 8. 封装标准侧载IPA（修复空包误判）
+      - name: 8. 封装标准侧载IPA
         run: |
           set -euo pipefail
           rm -rf Payload YOLO-Final.ipa
@@ -118,9 +131,9 @@ jobs:
           IPA_SIZE=$(du -sh YOLO-Final.ipa | awk '{print $1}')
           echo "📦 IPA打包完成！最终大小: $IPA_SIZE"
 
-          # 仅在小于100KB时报错，彻底适配你的项目大小
+          # 最终IPA大小校验：小于10MB判定为空包
           IPA_SIZE_KB=$(du -k YOLO-Final.ipa | cut -f1)
-          if [ "$IPA_SIZE_KB" -lt 100 ]; then
+          if [ "$IPA_SIZE_KB" -lt 10240 ]; then
             echo "❌ 打包失败，生成空壳IPA，大小仅${IPA_SIZE}"
             exit 1
           fi
